@@ -40,6 +40,44 @@ jobs:
         env:
           DOCKER_BUILDKIT: 1
 
+      - name: Deploy to Azure Container Instances
+        if: always()
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -e
+          echo "Logging into Azure using provided credentials"
+          # Ensure az is available from previous login step
+          az account show
+
+          echo "Retrieving ACR credentials"
+          ACR_USER=$(az acr credential show --name ${{ env.ACR_NAME }} --query "username" -o tsv)
+          ACR_PASS=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+
+          IMAGE=${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
+
+          # Delete existing container group if present
+          if az container show --resource-group ${{ env.RESOURCE_GROUP }} --name jira-aci-jiraapp >/dev/null 2>&1; then
+            echo "Deleting existing ACI group jira-aci-jiraapp"
+            az container delete --resource-group ${{ env.RESOURCE_GROUP }} --name jira-aci-jiraapp --yes
+          fi
+
+          echo "Creating ACI with image $IMAGE"
+          az container create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name jira-aci-jiraapp \
+            --image $IMAGE \
+            --dns-name-label jiraapp-aci-${{ github.run_number }} \
+            --registry-login-server ${{ env.ACR_LOGIN_SERVER }} \
+            --registry-username "$ACR_USER" \
+            --registry-password "$ACR_PASS" \
+            --ports 3000 \
+            --os-type Linux \
+            --cpu 1 --memory 1.5
+
+          FQDN=$(az container show --resource-group ${{ env.RESOURCE_GROUP }} --name jira-aci-jiraapp --query ipAddress.fqdn -o tsv)
+          echo "App available at: http://$FQDN:3000"
+
       - name: Deploy to Azure Web App (container)
         uses: azure/webapps-deploy@v2
         with:
