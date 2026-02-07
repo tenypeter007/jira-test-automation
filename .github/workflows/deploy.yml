@@ -1,0 +1,47 @@
+name: Build and Deploy to Azure
+
+on:
+  push:
+    branches:
+      - master
+      - main
+
+env:
+  ACR_NAME: jiraautomationacr
+  ACR_LOGIN_SERVER: jiraautomationacr.azurecr.io
+  IMAGE_NAME: jiraapp
+  RESOURCE_GROUP: jira-automation-rg
+  WEBAPP_NAME: jiraautomationacr-app
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Install Azure CLI
+        uses: azure/setup-azure@v1
+
+      - name: ACR login
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE_TAG=${{ github.sha }}
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG} .
+          docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
+        env:
+          DOCKER_BUILDKIT: 1
+
+      - name: Deploy to Azure Web App (container)
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: ${{ env.WEBAPP_NAME }}
+          images: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
