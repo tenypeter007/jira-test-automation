@@ -27,7 +27,7 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Install Azure CLI
-        uses: azure/setup-azure@v1
+        uses: azure/cli@v1
 
       - name: ACR login
         run: az acr login --name ${{ env.ACR_NAME }}
