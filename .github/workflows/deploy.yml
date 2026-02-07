@@ -80,7 +80,7 @@ jobs:
           echo "App available at: http://$FQDN:3000"
 
       - name: Deploy to Azure Web App (container)
-        if: env.DEPLOY_WEBAPP == 'true'
+        if: ${{ env.DEPLOY_WEBAPP == 'true' }}
         uses: azure/webapps-deploy@v2
         with:
           app-name: ${{ env.WEBAPP_NAME }}
