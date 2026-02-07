@@ -16,18 +16,35 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Install dependencies
-        # use `npm install` because `npm ci` requires a package-lock.json which may not exist
+      - name: Determine TARGET_REPO_URL
+        id: target
+        run: |
+          if [ -f .env ]; then
+            url=$(grep -E '^TARGET_REPO_URL=' .env | cut -d'=' -f2- || true)
+            echo "TARGET=$url"
+            echo "TARGET_REPO_URL=$url" >> $GITHUB_ENV
+          fi
+
+      - name: Clone target tests repo
+        run: |
+          repo_url=${TARGET_REPO_URL:-https://github.com/tenypeter007/saucedemo-playwright.git}
+          echo "Cloning tests repo: $repo_url"
+          git clone "$repo_url" tests-repo
+
+      - name: Install dependencies for tests
+        working-directory: tests-repo
         run: npm install
 
-      - name: Install Playwright browsers
+      - name: Install Playwright browsers for tests
+        working-directory: tests-repo
         run: npx playwright install --with-deps
 
       - name: Run Playwright tests (HTML report)
+        working-directory: tests-repo
         run: npx playwright test --reporter=html
 
       - name: Upload Playwright HTML report
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: playwright-report
+          path: tests-repo/playwright-report
