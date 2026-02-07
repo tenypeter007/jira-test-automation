@@ -1,0 +1,23 @@
+{
+  "name": "jira-test-automation",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.73.0",
+    "axios": "^1.13.4",
+    "body-parser": "^2.2.2",
+    "dotenv": "^17.2.4",
+    "express": "^4.18.2",
+    "form-data": "^4.0.5",
+    "jira-client": "^8.2.2",
+    "simple-git": "^3.30.0"
+  }
+}

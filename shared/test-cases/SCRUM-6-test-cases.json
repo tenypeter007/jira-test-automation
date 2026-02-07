@@ -1,0 +1,382 @@
+{
+  "scenarios": [
+    {
+      "id": "TC001",
+      "title": "Verify user can login with valid credentials",
+      "scenario": "User Login - Happy Path",
+      "priority": "High",
+      "preconditions": [
+        "User account exists in the system",
+        "Browser is open and navigated to login page",
+        "Valid user credentials are available"
+      ],
+      "testSteps": [
+        {
+          "step": 1,
+          "action": "Navigate to the login page",
+          "expectedResult": "Login page displays with username and password fields visible"
+        },
+        {
+          "step": 2,
+          "action": "Enter valid username in the username field",
+          "expectedResult": "Username is accepted and displayed clearly in the field"
+        },
+        {
+          "step": 3,
+          "action": "Enter valid password in the password field",
+          "expectedResult": "Password characters are masked with asterisks or dots"
+        },
+        {
+          "step": 4,
+          "action": "Click the 'Login' button",
+          "expectedResult": "System validates credentials and redirects user to dashboard page"
+        },
+        {
+          "step": 5,
+          "action": "Verify dashboard page loads completely",
+          "expectedResult": "Dashboard displays with user-specific content and navigation options"
+        }
+      ],
+      "testData": {
+        "username": "testuser@example.com",
+        "password": "ValidPass123!"
+      }
+    },
+    {
+      "id": "TC002",
+      "title": "Verify login fails with invalid username",
+      "scenario": "User Login - Invalid Username",
+      "priority": "High",
+      "preconditions": [
+        "Browser is open and navigated to login page",
+        "Invalid username test data is available"
+      ],
+      "testSteps": [
+        {
+          "step": 1,
+          "action": "Navigate to the login page",
+          "expectedResult": "Login page displays with username and password fields visible"
+        },
+        {
+          "step": 2,
+          "action": "Enter invalid username in the username field",
+          "expectedResult": "Invalid username is displayed in the field"
+        },
+        {
+          "step": 3,
+          "action": "Enter valid password in the password field",
+          "expectedResult": "Password characters are masked with asterisks or dots"
+        },
+        {
+          "step": 4,
+          "action": "Click the 'Login' button",
+          "expectedResult": "System displays error message indicating invalid credentials"
+        },
+        {
+          "step": 5,
+          "action": "Verify user remains on login page",
+          "expectedResult": "User is not redirected and stays on the login page"
+        }
+      ],
+      "testData": {
+        "username": "invaliduser@example.com",
+        "password": "ValidPass123!"
+      }
+    },
+    {
+      "id": "TC003",
+      "title": "Verify login fails with invalid password",
+      "scenario": "User Login - Invalid Password",
+      "priority": "High",
+      "preconditions": [
+        "Valid user account exists in the system",
+        "Browser is open and navigated to login page",
+        "Valid username and invalid password test data available"
+      ],
+      "testSteps": [
+        {
+          "step": 1,
+          "action": "Navigate to the login page",
+          "expectedResult": "Login page displays with username and password fields visible"
+        },
+        {
+          "step": 2,
+          "action": "Enter valid username in the username field",
+          "expectedResult": "Valid username is displayed in the field"
+        },
+        {
+          "step": 3,
+          "action": "Enter invalid password in the password field",
+          "expectedResult": "Password characters are masked with asterisks or dots"
+        },
+        {
+          "step": 4,
+          "action": "Click the 'Login' button",
+          "expectedResult": "System displays error message indicating invalid credentials"
+        },
+        {
+          "step": 5,
+          "action": "Verify user remains on login page",
+          "expectedResult": "User is not redirected and stays on the login page with error displayed"
+        }
+      ],
+      "testData": {
+        "username": "testuser@example.com",
+        "password": "WrongPassword123!"
+      }
+    },
+    {
+      "id": "TC004",
+      "title": "Verify login validation with empty username field",
+      "scenario": "User Login - Empty Username",
+      "priority": "Medium",
+      "preconditions": [
+        "Browser is open and navigated to login page"
+      ],
+      "testSteps": [
+        {
+          "step": 1,
+          "action": "Navigate to the login page",
+          "expectedResult": "Login page displays with username and password fields visible"
+        },
+        {
+          "step": 2,
+          "action": "Leave username field empty",
+          "expectedResult": "Username field remains blank"
+        },
+        {
+          "step": 3,
+          "action": "Enter valid password in the password field",
+          "expectedResult": "Password characters are masked with asterisks or dots"
+        },
+        {
+          "step": 4,
+          "action": "Click the 'Login' button",
+          "expectedResult": "System displays validation error message for required username field"
+        },
+        {
+          "step": 5,
+          "action": "Verify user remains on login page",
+          "expectedResult": "User is not redirected and stays on the login page"
+        }
+      ],
+      "testData": {
+        "username": "",
+        "password": "ValidPass123!"
+      }
+    },
+    {
+      "id": "TC005",
+      "title": "Verify login validation with empty password field",
+      "scenario": "User Login - Empty Password",
+      "priority": "Medium",
+      "preconditions": [
+        "Browser is open and navigated to login page"
+      ],
+      "testSteps": [
+        {
+          "step": 1,
+          "action": "Navigate to the login page",
+          "expectedResult": "Login page displays with username and password fields visible"
+        },
+        {
+          "step": 2,
+          "action": "Enter valid username in the username field",
+          "expectedResult": "Valid username is displayed in the field"
+        },
+        {
+          "step": 3,
+          "action": "Leave password field empty",
+          "expectedResult": "Password field remains blank"
+        },
+        {
+          "step": 4,
+          "action": "Click the 'Login' button",
+          "expectedResult": "System displays validation error message for required password field"
+        },
+        {
+          "step": 5,
+          "action": "Verify user remains on login page",
+          "expectedResult": "User is not redirected and stays on the login page"
+        }
+      ],
+      "testData": {
+        "username": "testuser@example.com",
+        "password": ""
+      }
+    },
+    {
+      "id": "TC006",
+      "title": "Verify login validation with both empty fields",
+      "scenario": "User Login - Empty Fields",
+      "priority": "Medium",
+      "preconditions": [
+        "Browser is open and navigated to login page"
+      ],
+      "testSteps": [
+        {
+          "step": 1,
+          "action": "Navigate to the login page",
+          "expectedResult": "Login page displays with username and password fields visible"
+        },
+        {
+          "step": 2,
+          "action": "Leave username field empty",
+          "expectedResult": "Username field remains blank"
+        },
+        {
+          "step": 3,
+          "action": "Leave password field empty",
+          "expectedResult": "Password field remains blank"
+        },
+        {
+          "step": 4,
+          "action": "Click the 'Login' button",
+          "expectedResult": "System displays validation error messages for both required fields"
+        },
+        {
+          "step": 5,
+          "action": "Verify user remains on login page",
+          "expectedResult": "User is not redirected and stays on the login page with validation errors"
+        }
+      ],
+      "testData": {
+        "username": "",
+        "password": ""
+      }
+    },
+    {
+      "id": "TC007",
+      "title": "Verify password masking functionality",
+      "scenario": "Password Security - Masking",
+      "priority": "High",
+      "preconditions": [
+        "Browser is open and navigated to login page"
+      ],
+      "testSteps": [
+        {
+          "step": 1,
+          "action": "Navigate to the login page",
+          "expectedResult": "Login page displays with username and password fields visible"
+        },
+        {
+          "step": 2,
+          "action": "Click in the password field to focus",
+          "expectedResult": "Password field is focused and cursor is active"
+        },
+        {
+          "step": 3,
+          "action": "Type characters one by one in the password field",
+          "expectedResult": "Each character typed is immediately masked with asterisks or dots"
+        },
+        {
+          "step": 4,
+          "action": "Verify complete password is fully masked",
+          "expectedResult": "All password characters are hidden and displayed as masked characters"
+        },
+        {
+          "step": 5,
+          "action": "Right-click on password field and check context menu",
+          "expectedResult": "Copy/paste options should be restricted or password remains masked"
+        }
+      ],
+      "testData": {
+        "password": "TestPassword123!"
+      }
+    },
+    {
+      "id": "TC008",
+      "title": "Verify remember me functionality when checked",
+      "scenario": "User Login - Remember Me Enabled",
+      "priority": "Medium",
+      "preconditions": [
+        "Valid user account exists in the system",
+        "Browser is open and navigated to login page",
+        "Remember me checkbox is available on login page"
+      ],
+      "testSteps": [
+        {
+          "step": 1,
+          "action": "Navigate to the login page",
+          "expectedResult": "Login page displays with username, password fields and remember me checkbox"
+        },
+        {
+          "step": 2,
+          "action": "Enter valid username in the username field",
+          "expectedResult": "Username is displayed in the field"
+        },
+        {
+          "step": 3,
+          "action": "Enter valid password in the password field",
+          "expectedResult": "Password characters are masked"
+        },
+        {
+          "step": 4,
+          "action": "Check the 'Remember Me' checkbox",
+          "expectedResult": "Remember me checkbox is checked/selected"
+        },
+        {
+          "step": 5,
+          "action": "Click the 'Login' button",
+          "expectedResult": "User is successfully logged in and redirected to dashboard"
+        },
+        {
+          "step": 6,
+          "action": "Close browser and reopen, navigate to login page",
+          "expectedResult": "Username field should be pre-filled or user should remain logged in"
+        }
+      ],
+      "testData": {
+        "username": "testuser@example.com",
+        "password": "ValidPass123!"
+      }
+    },
+    {
+      "id": "TC009",
+      "title": "Verify remember me functionality when unchecked",
+      "scenario": "User Login - Remember Me Disabled",
+      "priority": "Medium",
+      "preconditions": [
+        "Valid user account exists in the system",
+        "Browser is open and navigated to login page",
+        "Remember me checkbox is available on login page"
+      ],
+      "testSteps": [
+        {
+          "step": 1,
+          "action": "Navigate to the login page",
+          "expectedResult": "Login page displays with username, password fields and remember me checkbox"
+        },
+        {
+          "step": 2,
+          "action": "Enter valid username in the username field",
+          "expectedResult": "Username is displayed in the field"
+        },
+        {
+          "step": 3,
+          "action": "Enter valid password in the password field",
+          "expectedResult": "Password characters are masked"
+        },
+        {
+          "step": 4,
+          "action": "Ensure 'Remember Me' checkbox is unchecked",
+          "expectedResult": "Remember me checkbox is unchecked/unselected"
+        },
+        {
+          "step": 5,
+          "action": "Click the 'Login' button",
+          "expectedResult": "User is successfully logged in and redirected to dashboard"
+        },
+        {
+          "step": 6,
+          "action": "Close browser and reopen, navigate to login page",
+          "expectedResult": "Login page displays with empty fields and user is not remembered"
+        }
+      ],
+      "testData": {
+        "username": "testuser@example.com",
+        "password": "ValidPass123!"
+      }
+    }
+  ]
+}
