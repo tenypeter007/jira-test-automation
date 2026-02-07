@@ -6,9 +6,14 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production && \
-    npm install --save-dev @playwright/test
+        # Install production dependencies.
+        # Use "npm ci" when a lockfile is present for reproducible installs,
+        # otherwise fall back to "npm install --omit=dev".
+        RUN if [ -f package-lock.json ]; then \
+                    npm ci --only=production; \
+                else \
+                    npm install --omit=dev; \
+                fi
 
     # Production stage with Playwright browser
     # Use the latest official Playwright image (tag may change over time).
