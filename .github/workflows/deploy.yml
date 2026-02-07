@@ -1,4 +1,6 @@
-name: Build and Deploy to Azure
+env:
+jobs:
+name: CI — test, build and deploy
 
 on:
   push:
@@ -15,7 +17,30 @@ env:
   DEPLOY_WEBAPP: 'false'
 
 jobs:
+  test:
+    name: Run Playwright tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Run Playwright tests
+        run: npx playwright test --reporter=list
+
   build-and-deploy:
+    name: Build, push image and deploy
+    needs: test
     runs-on: ubuntu-latest
 
     steps:
@@ -48,7 +73,6 @@ jobs:
         run: |
           set -e
           echo "Logging into Azure using provided credentials"
-          # Ensure az is available from previous login step
           az account show
 
           echo "Retrieving ACR credentials"
@@ -57,7 +81,6 @@ jobs:
 
           IMAGE=${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
 
-          # Delete existing container group if present
           if az container show --resource-group ${{ env.RESOURCE_GROUP }} --name jira-aci-jiraapp >/dev/null 2>&1; then
             echo "Deleting existing ACI group jira-aci-jiraapp"
             az container delete --resource-group ${{ env.RESOURCE_GROUP }} --name jira-aci-jiraapp --yes
