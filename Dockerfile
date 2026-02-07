@@ -10,8 +10,10 @@ COPY package*.json ./
 RUN npm ci --only=production && \
     npm install --save-dev @playwright/test
 
-# Production stage with Playwright browser
-FROM mcr.microsoft.com/playwright:v1.40.0-bookworm
+    # Production stage with Playwright browser
+    # Use the latest official Playwright image (tag may change over time).
+    # If you prefer a specific Playwright version, replace `latest` with that version.
+    FROM mcr.microsoft.com/playwright:latest
 
 WORKDIR /app
 
