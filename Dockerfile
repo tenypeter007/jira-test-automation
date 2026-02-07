@@ -13,7 +13,9 @@ COPY package*.json ./
                     npm ci --only=production; \
                 else \
                     npm install --omit=dev; \
-                fi
+                fi && \
+                # Ensure Playwright runtime is available in the production image
+                npm install playwright --no-audit --no-fund
 
     # Production stage with Playwright browser
     # Use the latest official Playwright image (tag may change over time).
