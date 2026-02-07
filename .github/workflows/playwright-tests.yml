@@ -35,9 +35,12 @@ jobs:
         working-directory: tests-repo
         run: npm install
 
-      - name: Install Playwright browsers for tests
+      - name: Install Playwright system dependencies and browsers for tests
         working-directory: tests-repo
-        run: npx playwright install --with-deps
+        run: |
+          # Use playwright's install-deps which uses the correct package names for the runner OS
+          npx playwright install-deps || true
+          npx playwright install
 
       - name: Run Playwright tests (HTML report)
         working-directory: tests-repo
