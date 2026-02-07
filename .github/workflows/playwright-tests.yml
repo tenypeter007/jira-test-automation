@@ -17,7 +17,8 @@ jobs:
           node-version: '18'
 
       - name: Install dependencies
-        run: npm ci
+        # use `npm install` because `npm ci` requires a package-lock.json which may not exist
+        run: npm install
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps
