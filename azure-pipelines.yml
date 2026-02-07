@@ -1,0 +1,162 @@
+trigger:
+  - main
+
+pr:
+  - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  dockerRegistryServiceConnection: '$(AZURE_REGISTRY_CONNECTION)'
+  imageRepository: 'jira-test-automation'
+  containerRegistry: '$(AZURE_REGISTRY_NAME)'
+  dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
+  tag: '$(Build.BuildNumber)'
+
+stages:
+  - stage: Build
+    displayName: Build and Test
+    jobs:
+      - job: BuildAndPackage
+        displayName: Build Docker Image
+        steps:
+          - task: Docker@2
+            displayName: Build image
+            inputs:
+              command: build
+              repository: $(imageRepository)
+              dockerfile: $(dockerfilePath)
+              containerRegistry: $(dockerRegistryServiceConnection)
+              tags: |
+                $(tag)
+                latest
+
+          - task: Docker@2
+            displayName: Push image to registry
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+            inputs:
+              command: push
+              repository: $(imageRepository)
+              containerRegistry: $(dockerRegistryServiceConnection)
+              tags: |
+                $(tag)
+                latest
+
+  - stage: Test
+    displayName: Run Tests
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: RunTests
+        displayName: Execute Playwright Tests in Container
+        steps:
+          - task: DockerCompose@0
+            displayName: Run Tests in Docker Container
+            inputs:
+              action: 'Run services'
+              dockerComposeFile: 'docker-compose.test.yml'
+              dockerComposeCommand: 'up --abort-on-container-exit'
+              includeSourceTags: true
+              includeLatestTag: true
+
+          - task: PublishTestResults@2
+            displayName: Publish Test Results
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '**/test-results/junit.xml'
+              mergeTestResults: true
+              failTaskOnFailedTests: false
+
+          - task: PublishBuildArtifacts@1
+            displayName: Publish Test Reports
+            condition: always()
+            inputs:
+              PathtoPublish: '$(Build.SourcesDirectory)/test-results'
+              ArtifactName: 'playwright-reports-$(System.JobId)'
+
+          - task: PublishBuildArtifacts@1
+            displayName: Publish Screenshots
+            condition: always()
+            inputs:
+              PathtoPublish: '$(Build.SourcesDirectory)/test-results'
+              ArtifactName: 'test-screenshots-$(System.JobId)'
+
+  - stage: Deploy
+    displayName: Deploy Test Runner
+    dependsOn: Test
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: DeployToACI
+        displayName: Deploy to Azure Container Instances
+        steps:
+          - task: AzureContainerInstances@1
+            displayName: Deploy Container Instance
+            inputs:
+              azureSubscriptionEndpoint: '$(AZURE_SUBSCRIPTION)'
+              action: 'Create or Update Container Group'
+              resourceGroupName: '$(AZURE_RESOURCE_GROUP)'
+              containerGroupName: 'jira-automation-test-runner'
+              location: 'eastus'
+              imageSourceType: 'Registry'
+              imageRegistryEndpoint: '$(dockerRegistryServiceConnection)'
+              imageName: '$(containerRegistry).azurecr.io/$(imageRepository):$(tag)'
+              containerName: 'test-runner'
+              containerPort: '3000'
+              osType: 'Linux'
+              cpu: 2
+              memoryInGb: 4
+              command: 'npm start'
+              environmentVariables:
+                - name: 'JIRA_HOST'
+                  value: '$(JIRA_HOST)'
+                - name: 'JIRA_EMAIL'
+                  secureValue: '$(JIRA_EMAIL)'
+                - name: 'JIRA_API_TOKEN'
+                  secureValue: '$(JIRA_API_TOKEN)'
+                - name: 'ANTHROPIC_API_KEY'
+                  secureValue: '$(ANTHROPIC_API_KEY)'
+                - name: 'GITHUB_TOKEN'
+                  secureValue: '$(GITHUB_TOKEN)'
+                - name: 'GITHUB_USERNAME'
+                  value: '$(GITHUB_USERNAME)'
+                - name: 'TARGET_REPO_URL'
+                  value: '$(TARGET_REPO_URL)'
+                - name: 'HEADED'
+                  value: 'true'
+
+  - stage: Cleanup
+    displayName: Cleanup Old Instances
+    dependsOn: Deploy
+    condition: succeeded()
+    jobs:
+      - job: CleanupACI
+        displayName: Remove Old Container Instances
+        steps:
+          - task: AzureCLI@2
+            displayName: Delete old container instances
+            inputs:
+              azureSubscription: '$(AZURE_SUBSCRIPTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Keep only the 3 most recent instances
+                INSTANCES=$(az container list \
+                  --resource-group $(AZURE_RESOURCE_GROUP) \
+                  --query "[?starts_with(name, 'jira-automation-test')] | sort_by(@, &createTime)" \
+                  --output tsv \
+                  --query-string [].name)
+                
+                COUNT=$(echo "$INSTANCES" | wc -l)
+                if [ $COUNT -gt 3 ]; then
+                  TO_DELETE=$(echo "$INSTANCES" | head -n $((COUNT-3)))
+                  echo "Deleting old instances:"
+                  echo "$TO_DELETE"
+                  echo "$TO_DELETE" | while read instance; do
+                    az container delete \
+                      --resource-group $(AZURE_RESOURCE_GROUP) \
+                      --name "$instance" \
+                      --yes
+                  done
+                fi

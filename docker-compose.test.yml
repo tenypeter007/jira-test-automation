@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jira-automation-test-runner
+    environment:
+      - JIRA_HOST=${JIRA_HOST}
+      - JIRA_EMAIL=${JIRA_EMAIL}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_USERNAME=${GITHUB_USERNAME}
+      - TARGET_REPO_URL=${TARGET_REPO_URL}
+      - PORT=3000
+      - HEADED=true
+      - DISPLAY=:99
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./test-results:/app/test-results
+      - ./shared/logs:/app/shared/logs
+    command: npm start
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
