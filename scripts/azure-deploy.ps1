@@ -213,11 +213,11 @@ Write-Host ""
 Write-Host "4. View logs:"
 Write-Host "   az webapp log tail --name $WEB_APP_NAME --resource-group $RESOURCE_GROUP"
 Write-Host ""
-Write-Host "📊 Resource Summary:" -ForegroundColor Yellow
+Write-Host "Resource Summary:" -ForegroundColor Yellow
 Write-Host "   Resource Group: $RESOURCE_GROUP"
 Write-Host "   Registry: $REGISTRY_URL"
 Write-Host "   Key Vault: $VAULT_NAME"
 Write-Host "   Web App: $WEB_APP_NAME"
 Write-Host "   App Service Plan: $PLAN_NAME"
 
-Write-Host "`n✅ Configuration saved. You can now set up Azure Pipelines!" -ForegroundColor Green
+Write-Host "`nConfiguration saved. You can now set up Azure Pipelines!" -ForegroundColor Green
