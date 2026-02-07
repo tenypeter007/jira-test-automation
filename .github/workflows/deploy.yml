@@ -12,6 +12,7 @@ env:
   IMAGE_NAME: jiraapp
   RESOURCE_GROUP: jira-automation-rg
   WEBAPP_NAME: jiraautomationacr-app
+  DEPLOY_WEBAPP: 'false'
 
 jobs:
   build-and-deploy:
@@ -79,6 +80,7 @@ jobs:
           echo "App available at: http://$FQDN:3000"
 
       - name: Deploy to Azure Web App (container)
+        if: env.DEPLOY_WEBAPP == 'true'
         uses: azure/webapps-deploy@v2
         with:
           app-name: ${{ env.WEBAPP_NAME }}
