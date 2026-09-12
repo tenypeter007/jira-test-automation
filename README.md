@@ -1,295 +1,112 @@
-# Jira Test Automation Framework
+# Jira Test Automation
 
-An AI-powered automation framework that integrates Jira with Playwright end-to-end testing. This system uses autonomous AI agents to generate test cases, create Playwright test scripts, and execute tests based on Jira issues.
+An Express service that fetches Jira issues, generates test scenarios and Playwright code with Claude, opens a draft GitHub PR, and executes the exact PR commit. Each stage runs once, errors stop the pipeline, and jobs expose their results through the API.
 
-## 🎯 Overview
+## Local setup
 
-This framework automates the entire test automation workflow:
-- **Agent 1:** Reads Jira issues and generates comprehensive test cases
-- **Agent 2:** Converts test cases into Playwright test scripts and page objects
-- **Agent 3:** Executes the generated tests and updates Jira with results
+Requires Node.js 22+, npm, and Git.
 
-## 📋 Features
-
-- 🤖 **AI-Powered Test Generation** - Uses Claude API to intelligently generate test cases from Jira issues
-- 🎭 **Playwright Integration** - Generates production-ready Playwright scripts with Page Object Model
-- 📊 **Jira Integration** - Seamlessly reads from and updates Jira with test status and results
-- 🔄 **GitHub Integration** - Automatically creates pull requests with generated test code
-- 📝 **Page Object Model** - Follows best practices with organized page objects and test specs
-- 🚀 **Multi-Agent Architecture** - Distributed task processing with specialized agents
-
-## 🏗️ Project Structure
-
-```
-jira-test-automation/
-├── agents/
-│   ├── agent1-test-creator/          # Generates test cases from Jira issues
-│   │   └── index.js
-│   ├── agent2-script-generator/      # Creates Playwright scripts and pages
-│   │   └── index.js
-│   └── agent3-test-executor/         # Executes tests and reports results
-│       └── index.js
-├── shared/
-│   ├── config/                       # Shared configuration files
-│   ├── logs/                         # Application logs
-│   ├── test-cases/                   # Generated test cases
-│   └── utils/
-│       └── jira-utils.js             # Jira API utilities
-├── playwright-tests/                 # Local test execution files
-├── scripts/                          # Utility scripts
-├── temp-repo/                        # Temporary repository for git operations
-├── server.js                         # Main Express server
-├── package.json                      # Dependencies and scripts
-└── .env                             # Environment configuration
-```
-
-## 🔧 Prerequisites
-
-- **Node.js** (v14 or higher)
-- **npm** or **yarn**
-- **Git**
-- **Jira Account** with API access
-- **Anthropic API Key** (Claude)
-- **GitHub Account** with personal access token
-- **Playwright** (installed via npm)
-
-## 📦 Installation
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/tenypeter007/jira-test-automation.git
-   cd jira-test-automation
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Configure environment variables:**
-   Create or update `.env` file with your credentials:
-
-   ```env
-   # Jira Configuration
-   JIRA_HOST=your-instance.atlassian.net
-   JIRA_EMAIL=your-email@example.com
-   JIRA_API_TOKEN=your-jira-api-token
-
-   # Anthropic API
-   ANTHROPIC_API_KEY=your-anthropic-api-key
-
-   # GitHub Configuration
-   GITHUB_TOKEN=your-github-personal-access-token
-   GITHUB_USERNAME=your-github-username
-   TARGET_REPO_URL=https://github.com/your-username/your-playwright-repo.git
-
-   # Server
-   PORT=3000
-   ```
-
-## 🚀 Getting Started
-
-### Start the Server
-
-```bash
+```sh
+npm ci
 npm start
 ```
 
-The server will run on `http://localhost:3000`
+The server starts at http://127.0.0.1:3000 without credentials. `GET /health` checks server availability, not provider connectivity. Running an agent requires the configuration below.
 
-### Run All Agents for a Jira Issue
+Copy `.env.example` to `.env` (PowerShell: `Copy-Item .env.example .env`) and fill in:
 
-```bash
-node server.js --issue SCRUM-6
+| Variable | Purpose |
+| --- | --- |
+| `JIRA_HOST` | Jira Cloud hostname, e.g. your-instance.atlassian.net |
+| `JIRA_EMAIL`, `JIRA_API_TOKEN` | Account with issue read/comment access |
+| `ANTHROPIC_API_KEY` | Claude API credentials |
+| `ANTHROPIC_MODEL` | Model ID; defaults to `claude-sonnet-5` |
+| `TARGET_REPO_URL` | HTTPS GitHub URL of the existing Playwright repository |
+| `GITHUB_TOKEN` | Token with access to repository contents and pull requests |
+| `API_TOKEN` | Bearer token for API calls; required when binding beyond loopback |
+| `HOST`, `PORT` | Defaults: 127.0.0.1 and 3000 |
+| `HEADED` | `false` by default; use `true` only with a working display |
+| `JIRA_SUCCESS_STATUS`, `JIRA_FAILURE_STATUS` | Optional Jira destination statuses; blank preserves the issue status |
+
+Do not commit `.env`. The Docker build excludes it. Git authentication is passed through process environment configuration, rather than persisted in clone URLs.
+
+The target repository must contain a working Playwright configuration and `@playwright/test` dependency, preferably with a lockfile. The generator reads existing test/page files to learn their imports and APIs. It supports `tests/pages/*.ts`, `tests/{e2e,ui,visual}/*.spec.ts`, and `tests/testdata.ts`. It cannot create or replace `BasePage.ts` or framework configuration. Review generated selectors and assertions before merging.
+
+## Run agents
+
+Run the full pipeline once and exit:
+
+```sh
+npm start -- --issue SCRUM-6
 ```
 
-### Agent Details
+Run individual stages:
 
-#### **Agent 1: Test Case Creator** 
-- Reads Jira issue key and description
-- Uses Claude to generate comprehensive test cases
-- Stores test cases in `/shared/test-cases/`
-- Saves test cases as JSON with:
-  - Preconditions
-  - Steps
-  - Expected results
-  - Test data
-
-#### **Agent 2: Script Generator**
-- Converts test cases into Playwright TypeScript code
-- Creates only:
-  - 📄 **Page Objects** in `tests/pages/` (extends BasePage)
-  - 🧪 **Test Specs** in `tests/e2e/` or `tests/ui/`
-  - 📊 **Test Data** in `tests/testdata.ts` (when needed)
-- Pushes code to GitHub as a pull request
-- Updates Jira with PR link
-
-#### **Agent 3: Test Executor**
-- Executes generated Playwright tests
-- Captures test results and screenshots
-- Updates Jira issue with:
-  - Test execution status
-  - Pass/fail counts
-  - Test duration
-  - Links to test reports
-
-## 📝 Configuration Details
-
-### Jira Setup
-
-1. Get your Jira API token:
-   - Go to https://id.atlassian.com/manage-profile/security/api-tokens
-   - Create new API token
-   - Copy and paste into `.env`
-
-2. Ensure your Jira instance has basic project setup
-
-### GitHub Setup
-
-1. Create personal access token:
-   - Go to GitHub Settings → Developer settings → Personal access tokens
-   - Generate new token with `repo` scope
-   - Copy and paste into `.env`
-
-2. Create target Playwright repository:
-   - The `TARGET_REPO_URL` should point to an existing Playwright test repository
-   - Recommended: https://github.com/tenypeter007/saucedemo-playwright
-
-### Anthropic API
-
-1. Get API key from https://console.anthropic.com
-2. Add to `.env` as `ANTHROPIC_API_KEY`
-
-## 🎯 Usage Examples
-
-### Generate Test Cases Only
-```bash
-node agents/agent1-test-creator/index.js
+```sh
+npm start -- --issue SCRUM-6 --agent 1
+npm start -- --issue SCRUM-6 --agent 2
+npm start -- --issue SCRUM-6 --agent 3 --pr https://github.com/OWNER/REPO/pull/123
 ```
 
-### Generate Scripts from Test Cases
-```bash
-node agents/agent2-script-generator/index.js
+Agent 1 writes `shared/test-cases/SCRUM-6-test-cases.json`. Agent 2 reads that file for standalone execution and returns the draft PR URL and commit SHA. Agent 3 requires a PR URL; it fetches and verifies the PR head instead of running the default branch. Failed tests make the CLI exit with code 1.
+
+Directly running `agents/.../index.js` does not start a job; use the CLI above.
+
+## HTTP API
+
+Send JSON with `Content-Type: application/json`. When `API_TOKEN` is configured, also send `Authorization: Bearer YOUR_TOKEN`.
+
+| Method | Endpoint | Body |
+| --- | --- | --- |
+| GET | `/health` | None; no authentication needed |
+| POST | `/generate-tests` or `/agents/all` | `{"issueKey":"SCRUM-6"}` |
+| POST | `/agent/1` or `/agents/1` | `{"issueKey":"SCRUM-6"}` |
+| POST | `/agent/2` or `/agents/2` | `{"issueKey":"SCRUM-6"}` |
+| POST | `/agent/3` or `/agents/3` | `{"issueKey":"SCRUM-6","prUrl":"https://github.com/OWNER/REPO/pull/123"}` |
+| GET | `/jobs/:id` | None |
+| POST | `/jira-webhook` | Jira event payload |
+
+Example in PowerShell, with the server running in another terminal:
+
+```powershell
+$job = Invoke-RestMethod http://127.0.0.1:3000/generate-tests -Method Post -ContentType application/json -Body '{"issueKey":"SCRUM-6"}'
+Invoke-RestMethod ("http://127.0.0.1:3000" + $job.statusUrl)
 ```
 
-### Execute Tests
-```bash
-node agents/agent3-test-executor/index.js
+Accepted jobs return HTTP 202 and a `statusUrl`. Poll it for `queued`, `running`, `completed`, or `failed`, including the result or error. Invalid input returns 400; missing configuration returns 503; duplicate active issue jobs return 409. There are at most four concurrent jobs. The latest 100 jobs are retained in memory and lost on restart.
+
+Webhooks trigger only for `jira:issue_created` or summary/description changes in `jira:issue_updated`. Comment and status updates are ignored to avoid feedback loops. Configure the sender to include the bearer header (for example, an authenticated Jira Automation web request). Event retries after a completed job can trigger another run; durable event deduplication is not implemented.
+
+## Tests
+
+```sh
+npm test
+npx playwright install chromium
+npm run test:smoke
 ```
 
-## 📊 Test Case Format
+The regression suite uses local fixtures and stubs, without external credentials. The smoke test launches real Chromium, fills a local form, then adds an intentional failing assertion and confirms the executor reports failure. Its command exits successfully when both checks work. Reports are saved beneath `work/smoke-*/`.
 
-Test cases are stored as JSON:
+GitHub Actions runs these checks on Windows and Linux. It tests this framework, without cloning or testing an unrelated default repository.
 
-```json
-{
-  "testCases": [
-    {
-      "title": "Test Case Title",
-      "preconditions": ["User is logged in"],
-      "steps": [
-        "Click on button",
-        "Fill form"
-      ],
-      "expectedResults": ["Success message displayed"],
-      "testData": {
-        "username": "test@example.com"
-      }
-    }
-  ]
-}
+The JSON reporter is configured to write a file explicitly. Nested suites, per-project results, skips and flaky retries are counted. Missing reports, setup errors and empty/all-skipped suites cannot count as success. See [Playwright reporter documentation](https://playwright.dev/docs/test-reporters).
+
+## Docker
+
+Set a nonempty `API_TOKEN` in `.env`, then:
+
+```sh
+docker compose -f docker-compose.test.yml up --build
 ```
 
-## 🎭 Generated Playwright Structure
+The image pins Playwright 1.58.2 and defaults to headless operation. The executor installs the target repository dependencies and matching browsers. Linux host installations outside Docker need Playwright system dependencies installed separately. Target configurations that require other services or credentials must be configured for the execution environment.
 
-Agent 2 follows the strict repository structure:
+## Limits and review
 
-```
-tests/
-├── pages/
-│   ├── BasePage.ts          (Base class)
-│   ├── LoginPage.ts
-│   └── CheckoutPage.ts
-├── e2e/
-│   ├── login.spec.ts
-│   └── checkout.spec.ts
-├── ui/
-│   └── inventory.spec.ts
-├── testdata.ts
-└── fixtures/
-```
+- Live generation needs valid Jira, Claude and GitHub access. A passing local regression suite does not verify those accounts or the quality of generated tests.
+- Generated code is executed with the service account's privileges. Run only trusted target repositories in an isolated worker/container; the server is not a multi-tenant sandbox.
+- The previous automatic selector-rewriting implementation was removed: it inferred selectors from unauthenticated static HTML, could edit the wrong file, and did not reliably verify its corrections. Failed tests now remain failed for review.
+- Execution reports remain in each unique `temp-repo/` checkout. Archive or remove old checkouts when no job is using them. They are retained for diagnosis, not automatically published or attached to Jira.
+- Claude's default model can be overridden using `ANTHROPIC_MODEL`; verify model availability for your account in the [Claude model documentation](https://platform.claude.com/docs/en/models/overview).
 
-## 🔐 Security Notes
-
-⚠️ **Important:** Never commit the `.env` file to version control. It contains sensitive credentials.
-
-The `.gitignore` file already excludes:
-- `.env` and `.env.local`
-- `node_modules/`
-- `dist/` and `build/`
-- Log files
-- Temporary directories
-
-## 🐛 Troubleshooting
-
-### "JIRA_API_TOKEN is not set"
-- Verify `.env` file exists in project root
-- Check JIRA_API_TOKEN value is correct
-- Restart the server
-
-### "GitHub API Error"
-- Verify GITHUB_TOKEN has `repo` scope
-- Check TARGET_REPO_URL points to valid repository
-- Ensure repository is accessible with the token
-
-### "Claude API Error"
-- Verify ANTHROPIC_API_KEY is valid
-- Check API key has sufficient quota
-- Review API rate limits
-
-## 📚 API Reference
-
-### Server Endpoints
-
-```bash
-GET  /health              # Health check
-POST /generate-tests      # Trigger all agents for an issue
-POST /agent/1             # Trigger Agent 1 only
-POST /agent/2             # Trigger Agent 2 only
-POST /agent/3             # Trigger Agent 3 only
-```
-
-## 🤝 Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## 📄 License
-
-This project is open source and available under the MIT License.
-
-## 👤 Author
-
-**Teny Peter**
-- GitHub: [@tenypeter007](https://github.com/tenypeter007)
-- Email: teny.peter007@gmail.com
-
-## 🔗 Related Projects
-
-- **Target Repository:** [saucedemo-playwright](https://github.com/tenypeter007/saucedemo-playwright)
-- **Jira Instance:** [tenypeter007.atlassian.net](https://tenypeter007.atlassian.net)
-
-## 📞 Support
-
-For issues, questions, or suggestions:
-1. Check the troubleshooting section
-2. Review existing GitHub issues
-3. Create a new issue with detailed description
-
----
-
-**Last Updated:** February 7, 2026
+See `REPAIR_REPORT.md` for the repaired defects and verification performed.

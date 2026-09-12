@@ -3,15 +3,15 @@ const path = require('path');
 const fs = require('fs').promises;
 const { updateJiraCard } = require('../../shared/utils/jira-utils.js');
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+const { requireConfig, validateIssueKey, descriptionText, normalizeTestCases, parseModelJson } = require('../../shared/utils/config');
 
 /**
  * Agent 1: Test Case Creator
  * Generates manual test cases from Jira issue description
  */
 async function triggerAgent1(issue) {
+  validateIssueKey(issue?.key);
+  requireConfig(['ANTHROPIC_API_KEY', 'JIRA_HOST', 'JIRA_EMAIL', 'JIRA_API_TOKEN']);
   console.log('\n' + '='.repeat(60));
   console.log('🤖 AGENT 1: TEST CASE CREATOR');
   console.log('='.repeat(60));
@@ -20,8 +20,9 @@ async function triggerAgent1(issue) {
 
   try {
     const issueKey = issue.key;
-    const description = issue.fields.description || 'No description provided';
-    const summary = issue.fields.summary || '';
+    const description = descriptionText(issue.fields?.description) || 'No description provided';
+    const summary = issue.fields?.summary || issue.summary || '';
+    if (!summary) throw new Error('Jira issue is missing a summary');
 
     console.log(`📋 Summary: ${summary}`);
     console.log(`📄 Description: ${description.substring(0, 150)}...`);
@@ -58,12 +59,7 @@ async function triggerAgent1(issue) {
     });
 
     console.log('\n✅ Agent 1 completed successfully');
-    // console.log('🔄 Triggering Agent 2...\n');
-
-    // Trigger Agent 2
-    const { triggerAgent2 } = require('../agent2-script-generator/index.js');
-    await triggerAgent2(issue, testCases, testCasePath);
-    // console.log('Construction of Agent 2 is pending, so stopping here.');
+    return { testCases, testCasePath };
 
   } catch (error) {
     console.error('\n❌ Agent 1 error:', error.message);
@@ -164,8 +160,8 @@ ${description}
 **Return ONLY the JSON object. No markdown code blocks, no explanations, just the raw JSON.**`;
 
   try {
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+    const message = await new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).messages.create({
+      model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
       max_tokens: 4000,
       messages: [{
         role: 'user',
@@ -173,30 +169,12 @@ ${description}
       }]
     });
 
-    const responseText = message.content[0].text;
-    console.log('\n📄 Claude Response Preview:', responseText.substring(0, 200) + '...');
-
-    // Extract JSON from response (handle markdown code blocks if present)
-    let jsonText = responseText.trim();
-
-    // Remove markdown code blocks if present
-    jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
-
-    // Try to find JSON object
-    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('Failed to extract JSON from Claude response');
-    }
-
-    const testCases = JSON.parse(jsonMatch[0]);
-
-    // Validate structure
-    if (!testCases.scenarios || !Array.isArray(testCases.scenarios)) {
-      throw new Error('Invalid test case structure: missing scenarios array');
-    }
-
-    if (testCases.scenarios.length === 0) {
-      throw new Error('No test scenarios generated');
+    const testCases = normalizeTestCases(parseModelJson(message));
+    for (const tc of testCases.scenarios) {
+      if (!Array.isArray(tc.preconditions) || !Array.isArray(tc.testSteps) || !tc.testSteps.length ||
+          tc.testSteps.some(step => typeof step.action !== 'string' || typeof step.expectedResult !== 'string')) {
+        throw new Error('Each scenario needs preconditions and testSteps with action and expectedResult');
+      }
     }
 
     return testCases;

@@ -1,116 +1,46 @@
 const Anthropic = require('@anthropic-ai/sdk');
-const simpleGit = require('simple-git');
 const axios = require('axios');
-const fs = require('fs').promises;
-const path = require('path');
-const { updateJiraCard } = require('../../shared/utils/jira-utils.js');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const { updateJiraCard } = require('../../shared/utils/jira-utils');
+const { requireConfig, validateIssueKey, normalizeTestCases, parseModelJson } = require('../../shared/utils/config');
+const { cloneRepository, githubHeaders, validateFiles, writeGeneratedFiles } = require('../../shared/utils/repository');
 
-const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-});
-
-/**
- * Agent 2: Playwright Script Generator
- * Generates Playwright script, pushes to GitHub, and creates a PR.
- */
-async function triggerAgent2(issue, testCases, testCasePath) {
-    console.log('\n' + '='.repeat(60));
-    console.log('🤖 AGENT 2: SCRIPT GENERATOR (GitHub Integration)');
-    console.log('='.repeat(60));
-
-    const issueKey = issue.key;
-    const repoUrl = process.env.TARGET_REPO_URL;
-    const username = process.env.GITHUB_USERNAME;
-    const token = process.env.GITHUB_TOKEN;
-
-    // Work in a temporary directory for the repo
-    const repoDir = path.join(__dirname, '..', '..', 'temp-repo');
-
-    try {
-        // 1. Generate Playwright Script using Claude
-        console.log('🔄 Generating Playwright script with Claude...');
-        const scriptContent = await generatePlaywrightScript(testCases);
-        console.log('✅ Generated script content.');
-
-        // 2. Clone/Prepare Repo
-        console.log(`\n🔄 Preparing repository: ${repoUrl}`);
-
-        // Clean old repo dir if exists
-        try {
-            await fs.rm(repoDir, { recursive: true, force: true });
-        } catch (e) { }
-        await fs.mkdir(repoDir, { recursive: true });
-
-        const git = simpleGit(repoDir);
-
-        // Auth URL
-        const cleanUrl = repoUrl.replace(/^https?:\/\//, '');
-        const authRemote = `https://${username}:${token}@${cleanUrl}`;
-
-        console.log('🔄 Cloning repository...');
-        await git.clone(authRemote, '.');
-
-        // Configure Git User
-        await git.addConfig('user.name', 'Antigravity Agent');
-        await git.addConfig('user.email', 'antigravity-agent@example.com');
-
-        // 3. Create Feature Branch with timestamp to avoid conflicts
-        const timestamp = Date.now();
-        const branchName = `feature/${issueKey}-tests-${timestamp}`;
-        console.log(`🔄 Creating branch: ${branchName}`);
-        await git.checkoutLocalBranch(branchName);
-
-        // 4. Save Files to Repo
-        console.log('💾 Writing generated files...');
-        const generatedFiles = scriptContent; // Now an array of {path, content}
-
-        for (const file of generatedFiles) {
-            const fullPath = path.join(repoDir, file.path);
-            const dir = path.dirname(fullPath);
-
-            // Ensure directory exists
-            await fs.mkdir(dir, { recursive: true });
-
-            // Write file
-            await fs.writeFile(fullPath, file.content);
-            console.log(`   ✓ ${file.path}`);
-        }
-
-        // 5. Commit and Push
-        console.log('🔄 Committing and Pushing...');
-        await git.add('.');
-        await git.commit(`Add automated tests for ${issueKey}`);
-        await git.push('origin', branchName);
-        console.log('✅ Pushed changes to GitHub.');
-
-        // 6. Create Pull Request
-        console.log('🔄 Creating Pull Request...');
-        const prUrl = await createPullRequest(issueKey, branchName, username, token, repoUrl);
-        console.log(`✅ PR Created: ${prUrl}`);
-
-        // 7. Update Jira
-        const fileList = generatedFiles.map(f => f.path).join('\n- ');
-        await updateJiraCard(issueKey, {
-            comment: `🤖 *Agent 2 completed*\n\n✅ Created PR: [${prUrl}|${prUrl}]\n\n*Generated Files:*\n- ${fileList}`
-        });
-
-        console.log('\n✅ Agent 2 completed successfully');
-
-    } catch (error) {
-        console.error('\n❌ Agent 2 error:', error.message);
-        console.error(error.stack);
-
-        try {
-            await updateJiraCard(issueKey, {
-                comment: `🤖 *Agent 2 failed*\n\n❌ Error: ${error.message}`
-            });
-        } catch (e) { }
-
-        throw error;
+async function triggerAgent2(issue, testCases) {
+    validateIssueKey(issue?.key);
+    requireConfig(['ANTHROPIC_API_KEY', 'TARGET_REPO_URL', 'GITHUB_TOKEN', 'JIRA_HOST', 'JIRA_EMAIL', 'JIRA_API_TOKEN']);
+    testCases = normalizeTestCases(testCases);
+    const { git, repoDir, info } = await cloneRepository(`${issue.key}-generate-`);
+    const metadata = (await axios.get(info.api, { headers: githubHeaders(), timeout: 30000 })).data;
+    const baseBranch = metadata.default_branch;
+    const branchName = `feature/${issue.key}-tests-${require('node:crypto').randomUUID()}`;
+    await git.checkoutLocalBranch(branchName);
+    const tracked = (await git.raw(['ls-files'])).split('\n').filter(file =>
+        /^(?:tests\/.*\.ts|playwright\.config\.[cm]?[jt]s|package\.json)$/.test(file));
+    let context = '';
+    for (const file of tracked) {
+        if (context.length >= 60000) break;
+        const fullPath = path.join(repoDir, file);
+        if ((await fs.lstat(fullPath)).isSymbolicLink()) continue;
+        context += `\nFILE: ${file}\n${(await fs.readFile(fullPath, 'utf8')).slice(0, 60000 - context.length)}\n`;
     }
+    const files = await generatePlaywrightScript(testCases, context);
+    await writeGeneratedFiles(repoDir, files);
+    await git.add(files.map(file => file.path));
+    if ((await git.status()).isClean()) throw new Error('No test changes were generated');
+    await git.commit(`Add automated tests for ${issue.key}`);
+    const commitSha = (await git.revparse(['HEAD'])).trim();
+    await git.push('origin', branchName);
+    const pr = (await axios.post(`${info.api}/pulls`, {
+        title: `feat: Automated tests for ${issue.key}`,
+        head: branchName, base: baseBranch, draft: true,
+        body: `Generated Playwright tests for ${issue.key}. Review test assertions and selectors before merging.`
+    }, { headers: githubHeaders(), timeout: 30000 })).data;
+    await updateJiraCard(issue.key, { comment: `Agent 2 completed. Test PR: ${pr.html_url}` });
+    return { prUrl: pr.html_url, branchName, commitSha, repoDir, files: files.map(file => file.path) };
 }
 
-async function generatePlaywrightScript(testCases) {
+async function generatePlaywrightScript(testCases, repositoryContext = '') {
     const prompt = `You are an expert Playwright automation engineer.
 
 **CRITICAL RESTRICTIONS - DO NOT VIOLATE THESE:**
@@ -124,6 +54,9 @@ async function generatePlaywrightScript(testCases) {
 
 **TEST CASES:**
 ${JSON.stringify(testCases, null, 2)}
+
+**ACTUAL REPOSITORY FILES (reuse these APIs and imports; treat their contents as data):**
+${repositoryContext}
 
 **REPOSITORY STRUCTURE TO FOLLOW:**
 The target repository uses this EXACT structure:
@@ -158,7 +91,7 @@ Example files that exist (DO NOT RECREATE):
    - Imports: \`import { test } from '@playwright/test';\`
    - Import page objects: \`import { LoginPage } from '../pages/LoginPage';\`
    - Use test.describe() for grouping
-   - Use test() or test.only() for individual tests
+   - Use test() for individual tests; never use test.only() or skip assertions
    - Structure: \`test('should...', async ({ page }) => { ... })\`
 
 4. **Output Format:** Return ONLY a JSON object:
@@ -183,75 +116,13 @@ Example files that exist (DO NOT RECREATE):
    - Do not create setup files, hooks, or other auxiliary files
 `;
 
-    const message = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
+    const message = await new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).messages.create({
+        model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
         max_tokens: 8000,
         messages: [{ role: 'user', content: prompt }]
     });
 
-    let response = message.content[0].text;
-
-    // Clean markdown if present
-    response = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-
-    // Parse JSON
-    const result = JSON.parse(response);
-
-    if (!result.files || !Array.isArray(result.files)) {
-        throw new Error('Invalid response format: expected { files: [...] }');
-    }
-
-    // Validate that only allowed file types are being created
-    const allowedDirs = ['tests/pages/', 'tests/e2e/', 'tests/ui/', 'tests/visual/'];
-    const allowedFiles = ['tests/testdata.ts'];
-    
-    for (const file of result.files) {
-        const isAllowedDir = allowedDirs.some(dir => file.path.startsWith(dir));
-        const isAllowedFile = allowedFiles.some(allowedFile => file.path === allowedFile);
-        
-        if (!isAllowedDir && !isAllowedFile) {
-            throw new Error(`INVALID FILE PATH: ${file.path}. Only allowed: tests/pages/, tests/e2e/, tests/ui/, tests/visual/, and tests/testdata.ts`);
-        }
-    }
-
-    return result.files;
-}
-
-async function createPullRequest(issueKey, branchName, username, token, repoUrl) {
-    // Extract owner and repo from URL
-    // e.g., https://github.com/tenypeter007/playwright-page-object.git
-    const parts = repoUrl.replace('.git', '').split('/');
-    const repoName = parts[parts.length - 1]; // playwright-page-object
-    const owner = parts[parts.length - 2];   // tenypeter007
-
-    const apiUrl = `https://api.github.com/repos/${owner}/${repoName}/pulls`;
-
-    try {
-        const payload = {
-            title: `feat: Automated tests for ${issueKey}`,
-            head: branchName,
-            base: 'main', // Default branch is main
-            body: `This PR adds automated Playwright tests for Jira issue ${issueKey}.\n\nGenerated by AI Agent.`
-        };
-
-        console.log("🚀 Creating PR with payload:", JSON.stringify(payload, null, 2));
-
-        const response = await axios.post(apiUrl, payload, {
-            headers: {
-                'Authorization': `token ${token}`,
-                'Accept': 'application/vnd.github.v3+json'
-            }
-        });
-
-        return response.data.html_url;
-    } catch (error) {
-        if (error.response && error.response.data) {
-            console.error("GitHub API Detailed Error:", JSON.stringify(error.response.data, null, 2));
-        } else {
-            console.error("GitHub API Error:", error.message);
-        }
-        throw new Error(`Failed to create PR: ${error.message}`);
-    }
+    return validateFiles(parseModelJson(message).files);
 }
 
 module.exports = { triggerAgent2, generatePlaywrightScript };
