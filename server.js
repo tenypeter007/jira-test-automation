@@ -1,191 +1,121 @@
-require('dotenv').config();
-const express = require("express");
-const { triggerAgent1 } = require('./agents/agent1-test-creator/index.js');
-const { triggerAgent2, generatePlaywrightScript } = require('./agents/agent2-script-generator/index.js');
-const { triggerAgent3 } = require('./agents/agent3-test-executor/index.js');
-const fs = require('fs').promises;
-const path = require('path');
+const { requireConfig, validateIssueKey, normalizeTestCases } = require('./shared/utils/config');
+const express = require('express');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const { randomUUID, timingSafeEqual } = require('node:crypto');
+const { getIssue } = require('./shared/utils/jira-utils');
+const { triggerAgent1 } = require('./agents/agent1-test-creator');
+const { triggerAgent2 } = require('./agents/agent2-script-generator');
+const { triggerAgent3 } = require('./agents/agent3-test-executor');
 
-const app = express();
-
-// Built-in JSON parser
-app.use(express.json());
-
-// Request logging middleware
-app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-    next();
-});
-
-// Health check
-app.get("/", (req, res) => {
-    console.log("GET / hit");
-    res.json({
-        status: "running",
-        service: "Jira Test Automation Framework",
-        agents: ["Agent 1 (Test Creator)", "Agent 2 (Script Generator)", "Agent 3 (Test Executor)"],
-        version: "1.0.0"
-    });
-});
-
-// Health check endpoint
-app.get("/health", (req, res) => {
-    res.json({
-        status: "healthy",
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime()
-    });
-});
-
-/**
- * Webhook from Jira when issue is created/updated
- * Triggers full automation workflow
- */
-app.post("/jira-webhook", async (req, res) => {
-    console.log("Webhook received!");
-    console.log(JSON.stringify(req.body, null, 2));
-
-    const payload = req.body;
-
-    // Check if it's an issue event
-    if (payload.issue) {
-        const issueKey = payload.issue.key;
-        console.log(`Received webhook for issue: ${issueKey}`);
-
-        // Return 200 immediately to Jira so we don't time out
-        res.status(200).send(`Processing issue ${issueKey}...`);
-
-        // Trigger full workflow asynchronously
-        triggerFullWorkflow(payload.issue).catch(err => {
-            console.error("Error in full workflow:", err);
-        });
-    } else {
-        res.status(200).send("No issue in payload");
-    }
-});
-
-/**
- * Full automation workflow:
- * 1. Agent 1: Generate test cases
- * 2. Agent 2: Generate Playwright scripts
- * 3. Agent 3: Execute tests with AI-powered selector correction
- */
-async function triggerFullWorkflow(issue) {
-    try {
-        console.log(`\n${'='.repeat(60)}`);
-        console.log(`🚀 STARTING FULL AUTOMATION WORKFLOW FOR ${issue.key}`);
-        console.log(`${'='.repeat(60)}`);
-
-        // Step 1: Agent 1 - Create test cases
-        console.log(`\n📝 Step 1: Running Agent 1 (Test Creator)...`);
-        await triggerAgent1(issue);
-        console.log(`✅ Agent 1 completed`);
-
-        // Get test cases for Agent 2
-        const testCasePath = path.join(__dirname, 'shared', 'test-cases', `${issue.key}-test-cases.json`);
-        let testCases = [];
-        try {
-            const content = await fs.readFile(testCasePath, 'utf-8');
-            const data = JSON.parse(content);
-            testCases = data.testCases || [];
-            console.log(`📊 Loaded ${testCases.length} test cases`);
-        } catch (e) {
-            console.warn(`⚠️ Could not load test cases from ${testCasePath}`);
-        }
-
-        // Step 2: Agent 2 - Generate Playwright scripts
-        console.log(`\n🎭 Step 2: Running Agent 2 (Script Generator)...`);
-        let prUrl = null;
-        try {
-            await triggerAgent2(issue, testCases, testCasePath);
-            // Try to extract PR URL from recent git operations
-            prUrl = `https://github.com/${process.env.GITHUB_USERNAME}/${process.env.TARGET_REPO_URL.split('/').pop().replace('.git', '')}/pulls`;
-            console.log(`✅ Agent 2 completed - PR: ${prUrl}`);
-        } catch (e) {
-            console.error(`⚠️ Agent 2 error: ${e.message}`);
-        }
-
-        // Step 3: Agent 3 - Execute tests with selector correction
-        console.log(`\n🧪 Step 3: Running Agent 3 (Test Executor)...`);
-        try {
-            await triggerAgent3(issue, prUrl);
-            console.log(`✅ Agent 3 completed`);
-        } catch (e) {
-            console.error(`⚠️ Agent 3 error: ${e.message}`);
-        }
-
-        console.log(`\n${'='.repeat(60)}`);
-        console.log(`✅ WORKFLOW COMPLETED FOR ${issue.key}`);
-        console.log(`${'='.repeat(60)}\n`);
-
-    } catch (error) {
-        console.error("❌ Fatal error in workflow:", error);
-    }
+function checkConfig(agent) {
+  requireConfig(['JIRA_HOST', 'JIRA_EMAIL', 'JIRA_API_TOKEN']);
+  if (agent !== '3') requireConfig(['ANTHROPIC_API_KEY']);
+  if (agent !== '1') requireConfig(['TARGET_REPO_URL', 'GITHUB_TOKEN']);
 }
 
-/**
- * Manual triggers for individual agents
- */
-
-// Trigger Agent 1 only
-app.post("/agents/1", async (req, res) => {
-    const issueKey = req.body.issueKey || "SCRUM-6";
-    console.log(`Manual trigger for Agent 1 with issue: ${issueKey}`);
-    res.json({ status: "Agent 1 triggered", issueKey });
-    
-    // In real scenario, would fetch from Jira API
-    triggerAgent1({ key: issueKey, summary: "Manual test" }).catch(err => {
-        console.error("Agent 1 error:", err);
-    });
-});
-
-// Trigger Agent 2 only
-app.post("/agents/2", async (req, res) => {
-    const issueKey = req.body.issueKey || "SCRUM-6";
-    console.log(`Manual trigger for Agent 2 with issue: ${issueKey}`);
-    res.json({ status: "Agent 2 triggered", issueKey });
-    
-    const testCasePath = path.join(__dirname, 'shared', 'test-cases', `${issueKey}-test-cases.json`);
-    let testCases = [];
-    try {
-        const content = await fs.readFile(testCasePath, 'utf-8');
-        const data = JSON.parse(content);
-        testCases = data.testCases || [];
-    } catch (e) {
-        console.warn(`Could not load test cases: ${e.message}`);
+function createRunner(deps = {}) {
+  const api = { getIssue, triggerAgent1, triggerAgent2, triggerAgent3, ...deps };
+  return async (key, agent = 'all', prUrl) => {
+    validateIssueKey(key);
+    if (!['1', '2', '3', 'all'].includes(agent)) throw Object.assign(new Error('Unknown agent'), { status: 400 });
+    const issue = await api.getIssue(key);
+    if (agent === '1') return api.triggerAgent1(issue);
+    if (agent === '3') return api.triggerAgent3(issue, prUrl);
+    let testCases;
+    if (agent === 'all') ({ testCases } = await api.triggerAgent1(issue));
+    else {
+      const file = path.join(__dirname, 'shared/test-cases', `${key}-test-cases.json`);
+      testCases = normalizeTestCases(JSON.parse(await fs.readFile(file, 'utf8')));
     }
+    const generated = await api.triggerAgent2(issue, testCases);
+    if (agent === '2') return generated;
+    return api.triggerAgent3(issue, generated);
+  };
+}
 
-    triggerAgent2({ key: issueKey }, testCases, testCasePath).catch(err => {
-        console.error("Agent 2 error:", err);
+function createApp({ run = createRunner(), validateConfig = checkConfig } = {}) {
+  const app = express();
+  const jobs = new Map();
+  const active = new Set();
+  app.disable('x-powered-by');
+  app.use(express.json({ limit: '1mb' }));
+  app.get('/', (_req, res) => res.json({ service: 'Jira Test Automation', status: 'running' }));
+  app.get('/health', (_req, res) => res.json({ status: 'healthy', uptime: process.uptime() }));
+  app.use((req, res, next) => {
+    if (!process.env.API_TOKEN) return next();
+    const expected = Buffer.from(`Bearer ${process.env.API_TOKEN}`);
+    const actual = Buffer.from(req.get('authorization') || '');
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return res.status(401).json({ error: 'Unauthorized' });
+    next();
+  });
+  function submit(req, res, agent, key) {
+    validateIssueKey(key);
+    if (!['1', '2', '3', 'all'].includes(agent)) throw Object.assign(new Error('Unknown agent'), { status: 400 });
+    if (agent === '3' && !req.body?.prUrl) throw Object.assign(new Error('prUrl is required for Agent 3'), { status: 400 });
+    validateConfig(agent);
+    if (active.has(key)) return res.status(409).json({ error: `A job for ${key} is already running` });
+    if (active.size >= 4) return res.status(429).json({ error: 'All workers are busy; retry later' });
+    const job = { id: randomUUID(), issueKey: key, agent, status: 'queued', createdAt: new Date().toISOString() };
+    if (jobs.size >= 100) {
+      const oldest = [...jobs].find(([, item]) => !['queued', 'running'].includes(item.status));
+      if (oldest) jobs.delete(oldest[0]);
+    }
+    jobs.set(job.id, job);
+    active.add(key);
+    res.status(202).json({ ...job, statusUrl: `/jobs/${job.id}` });
+    Promise.resolve().then(async () => {
+      job.status = 'running';
+      job.result = await run(key, agent, req.body?.prUrl);
+      job.status = job.result?.success === false ? 'failed' : 'completed';
+    }).catch(error => {
+      job.status = 'failed';
+      job.error = error.message;
+    }).finally(() => {
+      job.finishedAt = new Date().toISOString();
+      active.delete(key);
     });
-});
+  }
+  app.get('/jobs/:id', (req, res) => {
+    const job = jobs.get(req.params.id);
+    if (!job) return res.status(404).json({ error: 'Job not found (jobs are kept in memory)' });
+    res.json(job);
+  });
+  app.post(['/generate-tests', '/agents/all'], (req, res) => submit(req, res, 'all', req.body?.issueKey));
+  app.post(['/agent/:agent', '/agents/:agent'], (req, res) => submit(req, res, req.params.agent, req.body?.issueKey));
+  app.post('/jira-webhook', (req, res) => {
+    const payload = req.body || {};
+    const relevantUpdate = payload.webhookEvent === 'jira:issue_updated' &&
+      payload.changelog?.items?.some(item => ['summary', 'description'].includes(item.field));
+    if (payload.webhookEvent !== 'jira:issue_created' && !relevantUpdate) {
+      return res.json({ status: 'ignored', reason: 'Only issue creation or summary/description changes trigger tests' });
+    }
+    submit(req, res, 'all', payload.issue?.key);
+  });
+  app.use((error, _req, res, _next) => res.status(error.status || 500).json({ error: error.message }));
+  return app;
+}
 
-// Trigger Agent 3 only
-app.post("/agents/3", async (req, res) => {
-    const issueKey = req.body.issueKey || "SCRUM-6";
-    const prUrl = req.body.prUrl || null;
-    console.log(`Manual trigger for Agent 3 with issue: ${issueKey}`);
-    res.json({ status: "Agent 3 triggered", issueKey, prUrl });
-    
-    triggerAgent3({ key: issueKey }, prUrl).catch(err => {
-        console.error("Agent 3 error:", err);
-    });
-});
+async function main(args = process.argv.slice(2)) {
+  if (args.length) {
+    const issueIndex = args.indexOf('--issue');
+    const agentIndex = args.indexOf('--agent');
+    const prIndex = args.indexOf('--pr');
+    if (issueIndex < 0) throw new Error('Usage: npm start -- --issue SCRUM-6 [--agent 1|2|3|all] [--pr URL]');
+    const key = validateIssueKey(args[issueIndex + 1]);
+    const agent = agentIndex < 0 ? 'all' : args[agentIndex + 1];
+    checkConfig(agent);
+    const result = await createRunner()(key, agent, prIndex < 0 ? undefined : args[prIndex + 1]);
+    console.log(JSON.stringify(result, null, 2));
+    if (result?.success === false) process.exitCode = 1;
+    return;
+  }
+  const host = process.env.HOST || '127.0.0.1';
+  if (!['127.0.0.1', 'localhost', '::1'].includes(host)) requireConfig(['API_TOKEN']);
+  const port = Number(process.env.PORT || 3000);
+  const server = createApp().listen(port, host, () => console.log(`Server running on http://${host}:${server.address().port}`));
+  server.on('error', error => { console.error(error.message); process.exitCode = 1; });
+}
 
-// Trigger all agents
-app.post("/agents/all", async (req, res) => {
-    const issueKey = req.body.issueKey || "SCRUM-6";
-    console.log(`Manual trigger for all agents with issue: ${issueKey}`);
-    res.json({ status: "All agents triggered", issueKey });
-    
-    triggerFullWorkflow({ key: issueKey, summary: "Manual test" }).catch(err => {
-        console.error("Workflow error:", err);
-    });
-});
-
-// Start server
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-    console.log(`✅ Server running on http://localhost:${PORT}`);
-});
+if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1; });
+module.exports = { createApp, createRunner, main };

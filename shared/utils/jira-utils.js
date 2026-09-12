@@ -1,23 +1,39 @@
-const JiraClient = require('jira-client');
 const axios = require('axios');
 const fs = require('fs');
 const FormData = require('form-data');
 
-const jira = new JiraClient({
-  protocol: 'https',
-  host: process.env.JIRA_HOST,
-  username: process.env.JIRA_EMAIL,
-  password: process.env.JIRA_API_TOKEN,
-  apiVersion: '2',
-  strictSSL: true
-});
+const { requireConfig, validateIssueKey } = require('./config');
+
+function getJira() {
+  requireConfig(['JIRA_HOST', 'JIRA_EMAIL', 'JIRA_API_TOKEN']);
+  const host = process.env.JIRA_HOST.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const client = axios.create({
+    baseURL: `https://${host}/rest/api/2`,
+    auth: { username: process.env.JIRA_EMAIL, password: process.env.JIRA_API_TOKEN },
+    timeout: 30000
+  });
+  const issuePath = key => `/issue/${encodeURIComponent(validateIssueKey(key))}`;
+  return {
+    findIssue: key => client.get(issuePath(key)).then(r => r.data),
+    addComment: (key, body) => client.post(`${issuePath(key)}/comment`, { body }),
+    updateIssue: (key, body) => client.put(issuePath(key), body),
+    listFields: () => client.get('/field').then(r => r.data),
+    listTransitions: key => client.get(`${issuePath(key)}/transitions`).then(r => r.data),
+    transitionIssue: (key, body) => client.post(`${issuePath(key)}/transitions`, body)
+  };
+}
+
+async function getIssue(issueKey) {
+  validateIssueKey(issueKey);
+  return getJira().findIssue(issueKey);
+}
 
 /**
  * Add a comment to a Jira issue
  */
 async function addComment(issueKey, commentText) {
   try {
-    await jira.addComment(issueKey, commentText);
+    await getJira().addComment(issueKey, commentText);
     console.log(`✅ Added comment to ${issueKey}`);
     return true;
   } catch (error) {
@@ -31,7 +47,7 @@ async function addComment(issueKey, commentText) {
  */
 async function updateIssueFields(issueKey, fields) {
   try {
-    await jira.updateIssue(issueKey, { fields });
+    await getJira().updateIssue(issueKey, { fields });
     console.log(`✅ Updated fields for ${issueKey}`);
     return true;
   } catch (error) {
@@ -45,7 +61,7 @@ async function updateIssueFields(issueKey, fields) {
  */
 async function getCustomFieldId(fieldName) {
   try {
-    const fields = await jira.listFields();
+    const fields = await getJira().listFields();
     const field = fields.find(f => f.name === fieldName);
     return field ? field.id : null;
   } catch (error) {
@@ -71,7 +87,7 @@ async function updateCustomFields(issueKey, customFields) {
     }
     
     if (Object.keys(fields).length > 0) {
-      await jira.updateIssue(issueKey, { fields });
+      await getJira().updateIssue(issueKey, { fields });
       console.log(`✅ Updated custom fields for ${issueKey}`);
     }
     
@@ -87,13 +103,13 @@ async function updateCustomFields(issueKey, customFields) {
  */
 async function transitionIssue(issueKey, statusName) {
   try {
-    const transitions = await jira.listTransitions(issueKey);
+    const transitions = await getJira().listTransitions(issueKey);
     const transition = transitions.transitions.find(
-      t => t.name === statusName || t.to.name === statusName
+      t => t.name.toLowerCase() === statusName.toLowerCase() || t.to.name.toLowerCase() === statusName.toLowerCase()
     );
     
     if (transition) {
-      await jira.transitionIssue(issueKey, {
+      await getJira().transitionIssue(issueKey, {
         transition: { id: transition.id }
       });
       console.log(`✅ Transitioned ${issueKey} to ${statusName}`);
@@ -176,6 +192,7 @@ async function updateJiraCard(issueKey, updates) {
 }
 
 module.exports = {
+  getIssue,
   addComment,
   updateIssueFields,
   updateCustomFields,

@@ -1,465 +1,108 @@
-const Anthropic = require('@anthropic-ai/sdk');
-const { chromium } = require('playwright');
-const fs = require('fs').promises;
-const path = require('path');
-const simpleGit = require('simple-git');
-const axios = require('axios');
-const { updateJiraCard } = require('../../shared/utils/jira-utils.js');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const execute = promisify(execFile);
+const { requireConfig, validateIssueKey } = require('../../shared/utils/config');
+const { cloneRepository, getPullRequest } = require('../../shared/utils/repository');
+const { updateJiraCard } = require('../../shared/utils/jira-utils');
 
-const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-});
-
-/**
- * Agent 3: Test Executor with AI-Powered Selector Correction
- * 
- * Workflow:
- * 1. Clone the test repository
- * 2. Run Playwright tests
- * 3. Capture failed selector errors
- * 4. Use Claude to analyze page HTML and suggest correct selectors
- * 5. Auto-correct page objects
- * 6. Re-run tests with corrected selectors
- * 7. Update Jira with final results
- * 8. Push corrections to GitHub (PR)
- */
-async function triggerAgent3(issue, prUrl) {
-    console.log('\n' + '='.repeat(60));
-    console.log('🤖 AGENT 3: TEST EXECUTOR (With AI Selector Correction)');
-    console.log('='.repeat(60));
-
-    const issueKey = issue.key;
-    const repoUrl = process.env.TARGET_REPO_URL;
-    const username = process.env.GITHUB_USERNAME;
-    const token = process.env.GITHUB_TOKEN;
-    const repoDir = path.join(__dirname, '..', '..', 'temp-repo');
-
-    let testResults = {
-        totalTests: 0,
-        passed: 0,
-        failed: 0,
-        correctedSelectors: [],
-        startTime: new Date(),
-        endTime: null
-    };
-
-    try {
-        // 1. Setup repository
-        console.log('🔄 Preparing test repository...');
-        await prepareTestRepo(repoDir, repoUrl, username, token);
-
-        // 2. Run initial tests
-        console.log('\n🔄 Running Playwright tests (Headed mode with screenshots)...');
-        const initialResults = await runPlaywrightTests(repoDir, true); // true = headed mode
-        testResults.totalTests = initialResults.totalTests;
-        testResults.passed = initialResults.passed;
-        testResults.failed = initialResults.failed;
-
-        console.log(`\n📊 Initial Test Results:`);
-        console.log(`   ✅ Passed: ${testResults.passed}`);
-        console.log(`   ❌ Failed: ${testResults.failed}`);
-        console.log(`   📊 Total: ${testResults.totalTests}`);
-
-        // 3. If tests failed, attempt AI-powered selector correction
-        if (testResults.failed > 0) {
-            console.log('\n🔄 Analyzing failed selectors with AI...');
-            const corrections = await correctFailedSelectors(repoDir, initialResults.failedTests);
-            testResults.correctedSelectors = corrections;
-
-            if (corrections.length > 0) {
-                console.log(`\n✅ Corrected ${corrections.length} selectors`);
-
-                // 4. Re-run tests with corrected selectors
-                console.log('\n🔄 Re-running tests with corrected selectors...');
-                const retryResults = await runPlaywrightTests(repoDir, true);
-                testResults.passed = retryResults.passed;
-                testResults.failed = retryResults.failed;
-
-                console.log(`\n📊 Retry Test Results:`);
-                console.log(`   ✅ Passed: ${testResults.passed}`);
-                console.log(`   ❌ Failed: ${testResults.failed}`);
-            }
-        }
-
-        testResults.endTime = new Date();
-        const duration = (testResults.endTime - testResults.startTime) / 1000; // seconds
-
-        // 5. Commit corrected selectors if any
-        if (testResults.correctedSelectors.length > 0) {
-            console.log('\n💾 Committing corrected page objects...');
-            await commitCorrections(repoDir, issueKey, testResults.correctedSelectors);
-
-            // Push to new branch
-            const timestamp = Date.now();
-            const branchName = `fix/${issueKey}-selectors-${timestamp}`;
-            await pushCorrections(repoDir, branchName, username, token);
-
-            // Create PR for corrections
-            console.log('\n🔄 Creating PR for selector corrections...');
-            const correctionPrUrl = await createCorrectionPR(issueKey, branchName, username, token, repoUrl);
-            testResults.correctionPrUrl = correctionPrUrl;
-        }
-
-        // 6. Update Jira with results
-        console.log('\n🔄 Updating Jira issue...');
-        await updateJiraWithResults(issueKey, testResults, prUrl);
-
-        console.log('\n✅ Agent 3 completed successfully');
-        return testResults;
-
-    } catch (error) {
-        console.error('\n❌ Agent 3 error:', error.message);
-        console.error(error.stack);
-
-        try {
-            await updateJiraCard(issueKey, {
-                comment: `🤖 *Agent 3 failed*\n\n❌ Error: ${error.message}`
-            });
-        } catch (e) { }
-
-        throw error;
-    }
+async function runNode(cli, args, cwd, env = process.env) {
+  return execute(process.execPath, [cli, ...args], {
+    cwd, env, windowsHide: true, timeout: 15 * 60 * 1000, maxBuffer: 20 * 1024 * 1024
+  });
 }
 
-async function prepareTestRepo(repoDir, repoUrl, username, token) {
-    try {
-        await fs.rm(repoDir, { recursive: true, force: true });
-    } catch (e) { }
-    await fs.mkdir(repoDir, { recursive: true });
-
-    const git = simpleGit(repoDir);
-    const cleanUrl = repoUrl.replace(/^https?:\/\//, '');
-    const authRemote = `https://${username}:${token}@${cleanUrl}`;
-
-    console.log('🔄 Cloning test repository...');
-    await git.clone(authRemote, '.');
-    console.log('✅ Repository cloned');
-
-    // Install dependencies
-    console.log('🔄 Installing dependencies...');
-    const { execSync } = require('child_process');
-    try {
-        execSync('npm install', { cwd: repoDir, stdio: 'pipe' });
-    } catch (e) {
-        console.warn('⚠️ npm install warnings (non-critical)');
+function parseReport(report) {
+  if (!Array.isArray(report.suites)) throw new Error('Invalid Playwright report: missing suites');
+  if (report.errors?.length) throw new Error(`Playwright run error: ${report.errors.map(e => e.message).join('; ')}`);
+  const result = { totalTests: 0, passed: 0, failed: 0, skipped: 0, flaky: 0, failedTests: [] };
+  function visit(suite) {
+    for (const spec of suite.specs || []) {
+      for (const test of spec.tests || []) {
+        result.totalTests++;
+        if (test.status === 'skipped') result.skipped++;
+        else if (test.status === 'expected' || test.status === 'flaky') {
+          result.passed++;
+          if (test.status === 'flaky') result.flaky++;
+        } else {
+          result.failed++;
+          const last = test.results?.at(-1);
+          result.failedTests.push({ name: spec.title, file: spec.file, project: test.projectName,
+            error: last?.error?.message || last?.errors?.map(e => e.message).join('\n') || 'Test did not complete' });
+        }
+      }
     }
-    console.log('✅ Dependencies installed');
+    for (const child of suite.suites || []) visit(child);
+  }
+  for (const suite of report.suites) visit(suite);
+  if (!result.totalTests || result.totalTests === result.skipped) throw new Error('No tests executed (empty or entirely skipped suite)');
+  result.success = result.failed === 0;
+  return result;
 }
 
 async function runPlaywrightTests(repoDir, headedMode = false) {
-    const { execSync } = require('child_process');
-    
-    try {
-        const command = headedMode 
-            ? 'npx playwright test --headed --reporter=html,json'
-            : 'npx playwright test --reporter=html,json';
-
-        console.log('Running:', command);
-        execSync(command, { 
-            cwd: repoDir,
-            stdio: 'pipe',
-            env: { ...process.env, HEADED: headedMode ? 'true' : 'false' }
-        });
-    } catch (e) {
-        // Playwright exit code is non-zero if tests fail, but it's expected
-        console.log('Test run completed (some tests may have failed)');
-    }
-
-    // Parse test results
-    const resultsPath = path.join(repoDir, 'test-results', 'results.json');
-    let testResults = {
-        totalTests: 0,
-        passed: 0,
-        failed: 0,
-        failedTests: []
-    };
-
-    try {
-        const resultsFile = await fs.readFile(resultsPath, 'utf-8');
-        const results = JSON.parse(resultsFile);
-
-        results.suites?.forEach(suite => {
-            suite.tests?.forEach(test => {
-                testResults.totalTests++;
-                if (test.status === 'passed') {
-                    testResults.passed++;
-                } else {
-                    testResults.failed++;
-                    testResults.failedTests.push({
-                        name: test.title,
-                        file: test.file,
-                        error: test.error?.message || 'Unknown error'
-                    });
-                }
-            });
-        });
-    } catch (e) {
-        console.warn('⚠️ Could not parse test results:', e.message);
-    }
-
-    // Get screenshots
-    try {
-        const screenshotDir = path.join(repoDir, 'test-results');
-        const screenshots = await fs.readdir(screenshotDir);
-        testResults.screenshots = screenshots.filter(f => f.endsWith('.png'));
-    } catch (e) { }
-
-    return testResults;
-}
-
-async function correctFailedSelectors(repoDir, failedTests) {
-    const corrections = [];
-
-    for (const failedTest of failedTests) {
-        try {
-            console.log(`\n🔄 Analyzing selector error in: ${failedTest.name}`);
-
-            // Extract element name from error
-            const elementMatch = failedTest.error.match(/locator\('([^']+)'\)|selector\('([^']+)'\)|'([^']+)'/);
-            const failedSelector = elementMatch?.[1] || elementMatch?.[2] || elementMatch?.[3];
-
-            if (!failedSelector) {
-                console.log(`   ⚠️ Could not extract selector from error`);
-                continue;
-            }
-
-            // Get page HTML for analysis
-            const pageFile = path.join(repoDir, failedTest.file);
-            const pageContent = await fs.readFile(pageFile, 'utf-8');
-            
-            // Extract page URL from test
-            const urlMatch = pageContent.match(/page\.goto\(['"]([^'"]+)['"]\)/);
-            const pageUrl = urlMatch?.[1];
-
-            if (!pageUrl) {
-                console.log(`   ⚠️ Could not extract page URL from test`);
-                continue;
-            }
-
-            console.log(`   📄 Fetching page HTML from: ${pageUrl}`);
-            
-            // Fetch page HTML
-            const pageHtml = await axios.get(pageUrl, { timeout: 10000 }).then(r => r.data).catch(() => null);
-            if (!pageHtml) {
-                console.log(`   ⚠️ Could not fetch page HTML`);
-                continue;
-            }
-
-            // Use Claude to analyze and suggest correct selector
-            const correctionPrompt = `You are an expert in Playwright and CSS/XPath selectors.
-
-TASK: The following CSS selector FAILED in a Playwright test:
-Failed Selector: ${failedSelector}
-
-The error indicates this selector does not exist on the page. Please analyze the HTML provided and suggest a CORRECT selector that will find the intended element.
-
-PAGE HTML (relevant section):
-${pageHtml.substring(0, 5000)}
-
-REQUIREMENTS:
-1. Return ONLY a JSON object with this exact structure:
-{
-  "originalSelector": "${failedSelector}",
-  "suggestedSelector": "[CSS selector or XPath that should work]",
-  "elementType": "[button/input/link/etc]",
-  "confidence": "[high/medium/low]",
-  "explanation": "[brief explanation of what changed]"
-}
-
-2. Prefer CSS selectors over XPath when possible
-3. Use data-testid or id attributes if available
-4. Return ONLY valid JSON, no markdown, no explanation text
-
-CRITICAL: Return ONLY the JSON object, nothing else.`;
-
-            const response = await anthropic.messages.create({
-                model: 'claude-sonnet-4-20250514',
-                max_tokens: 1000,
-                messages: [{ role: 'user', content: correctionPrompt }]
-            });
-
-            let jsonResponse = response.content[0].text;
-            jsonResponse = jsonResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-            
-            const suggestion = JSON.parse(jsonResponse);
-
-            if (suggestion.confidence === 'high' || suggestion.confidence === 'medium') {
-                console.log(`   ✅ Suggested selector: ${suggestion.suggestedSelector}`);
-                console.log(`   📝 Reason: ${suggestion.explanation}`);
-
-                // Update page object with new selector
-                const updated = await updatePageObjectSelector(repoDir, failedTest.file, suggestion);
-                if (updated) {
-                    corrections.push({
-                        test: failedTest.name,
-                        file: failedTest.file,
-                        originalSelector: suggestion.originalSelector,
-                        newSelector: suggestion.suggestedSelector
-                    });
-                    console.log(`   ✅ Page object updated`);
-                }
-            } else {
-                console.log(`   ⚠️ Low confidence suggestion, skipping`);
-            }
-
-        } catch (error) {
-            console.log(`   ❌ Error analyzing selector: ${error.message}`);
-        }
-    }
-
-    return corrections;
-}
-
-async function updatePageObjectSelector(repoDir, testFile, suggestion) {
-    try {
-        // Find corresponding page object file
-        const testContent = await fs.readFile(path.join(repoDir, testFile), 'utf-8');
-        
-        // Extract page import
-        const pageImportMatch = testContent.match(/import\s+{\s*(\w+)\s*}\s+from\s+['"]([^'"]+)['"]/);
-        if (!pageImportMatch) return false;
-
-        const pageClassName = pageImportMatch[1];
-        const pageFilePath = path.join(path.dirname(testFile), pageImportMatch[2] + '.ts');
-        const absolutePagePath = path.join(repoDir, pageFilePath);
-
-        // Read and update page object
-        let pageContent = await fs.readFile(absolutePagePath, 'utf-8');
-
-        // Replace old selector with new one (handle various selector patterns)
-        const selectorPatterns = [
-            new RegExp(`(['"\`\\(])${escapeRegex(suggestion.originalSelector)}(['"\`\\)])`, 'g'),
-            new RegExp(`: ['"\`]${escapeRegex(suggestion.originalSelector)}['"\`]`, 'g')
-        ];
-
-        let updated = false;
-        for (const pattern of selectorPatterns) {
-            if (pattern.test(pageContent)) {
-                pageContent = pageContent.replace(pattern, `$1${suggestion.suggestedSelector}$2`);
-                updated = true;
-                break;
-            }
-        }
-
-        if (updated) {
-            await fs.writeFile(absolutePagePath, pageContent);
-            return true;
-        }
-
-        return false;
-    } catch (error) {
-        console.log(`   ⚠️ Could not update page object: ${error.message}`);
-        return false;
-    }
-}
-
-function escapeRegex(str) {
-    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-async function commitCorrections(repoDir, issueKey, corrections) {
-    const git = simpleGit(repoDir);
-
-    const commitMessage = `fix(${issueKey}): Auto-correct failed selectors with AI analysis
-
-Corrected selectors:
-${corrections.map(c => `- ${c.originalSelector} → ${c.newSelector}`).join('\n')}
-
-Generated by Agent 3 (AI Selector Correction)`;
-
-    try {
-        await git.add('tests/pages/');
-        await git.commit(commitMessage);
-        console.log('✅ Changes committed');
-    } catch (error) {
-        if (error.message.includes('nothing to commit')) {
-            console.log('ℹ️ No changes to commit');
-        } else {
-            throw error;
-        }
-    }
-}
-
-async function pushCorrections(repoDir, branchName, username, token, repoUrl) {
-    const git = simpleGit(repoDir);
-
-    // Configure git
-    await git.addConfig('user.name', 'Antigravity Agent 3');
-    await git.addConfig('user.email', 'agent3@antigravity.ai');
-
-    try {
-        await git.checkoutLocalBranch(branchName);
-        await git.push('origin', branchName);
-        console.log(`✅ Pushed to branch: ${branchName}`);
-    } catch (error) {
-        console.log(`ℹ️ Could not push corrections: ${error.message}`);
-    }
-}
-
-async function createCorrectionPR(issueKey, branchName, username, token, repoUrl) {
-    const parts = repoUrl.replace('.git', '').split('/');
-    const repoName = parts[parts.length - 1];
-    const owner = parts[parts.length - 2];
-
-    const apiUrl = `https://api.github.com/repos/${owner}/${repoName}/pulls`;
-
-    try {
-        const payload = {
-            title: `fix: Auto-corrected selectors for ${issueKey}`,
-            head: branchName,
-            base: 'main',
-            body: `This PR contains automatically corrected selectors for failed tests in issue ${issueKey}.\n\nGenerated by AI Agent 3 (Selector Correction Engine).`
-        };
-
-        const response = await axios.post(apiUrl, payload, {
-            headers: {
-                'Authorization': `token ${token}`,
-                'Accept': 'application/vnd.github.v3+json'
-            }
-        });
-
-        return response.data.html_url;
-    } catch (error) {
-        console.error('Could not create correction PR:', error.message);
-        return null;
-    }
-}
-
-async function updateJiraWithResults(issueKey, testResults, prUrl) {
-    const duration = Math.round((testResults.endTime - testResults.startTime) / 1000);
-    const passPercentage = testResults.totalTests > 0 
-        ? Math.round((testResults.passed / testResults.totalTests) * 100)
-        : 0;
-
-    let comment = `🤖 *Agent 3: Test Execution Complete*\n\n`;
-    comment += `📊 *Test Results:*\n`;
-    comment += `- ✅ Passed: ${testResults.passed}/${testResults.totalTests}\n`;
-    comment += `- ❌ Failed: ${testResults.failed}/${testResults.totalTests}\n`;
-    comment += `- 📈 Success Rate: ${passPercentage}%\n`;
-    comment += `- ⏱️ Duration: ${duration}s\n\n`;
-
-    if (testResults.correctedSelectors.length > 0) {
-        comment += `🔧 *Selectors Corrected:* ${testResults.correctedSelectors.length}\n`;
-        testResults.correctedSelectors.forEach(correction => {
-            comment += `- \`${correction.originalSelector}\` → \`${correction.newSelector}\`\n`;
-        });
-        comment += '\n';
-    }
-
-    if (testResults.correctionPrUrl) {
-        comment += `📝 *Correction PR:* [${testResults.correctionPrUrl}|${testResults.correctionPrUrl}]\n`;
-    }
-
-    if (prUrl) {
-        comment += `\n🔗 *Test PR:* [${prUrl}|${prUrl}]\n`;
-    }
-
-    comment += `\n_Generated by Antigravity Agent 3 with AI Selector Correction Engine_`;
-
-    await updateJiraCard(issueKey, {
-        comment: comment,
-        status: testResults.failed === 0 ? 'DONE' : 'IN PROGRESS'
+  const cli = require.resolve('@playwright/test/cli', { paths: [repoDir] });
+  const reportPath = path.join(repoDir, 'automation-results.json');
+  await fs.rm(reportPath, { force: true });
+  let runError;
+  try {
+    await runNode(cli, ['test', '--forbid-only', '--reporter=html,json', ...(headedMode ? ['--headed'] : [])], repoDir, {
+      ...process.env, CI: '1', HEADED: String(headedMode), PLAYWRIGHT_HTML_OPEN: 'never',
+      PLAYWRIGHT_JSON_OUTPUT_FILE: reportPath,
+      PLAYWRIGHT_HTML_OUTPUT_DIR: path.join(repoDir, 'playwright-report')
     });
+  } catch (error) { runError = error; }
+  if (runError && (runError.killed || runError.code !== 1)) throw new Error(`Playwright process failed: ${runError.message}`);
+  let report;
+  try { report = JSON.parse(await fs.readFile(reportPath, 'utf8')); }
+  catch { throw new Error(`Playwright did not produce a valid JSON report${runError ? `: ${runError.stderr || runError.message}` : ''}`); }
+  const results = parseReport(report);
+  if (runError && results.failed === 0) throw new Error('Playwright exited unsuccessfully despite passing test entries');
+  return { ...results, reportPath, htmlReportPath: path.join(repoDir, 'playwright-report/index.html') };
 }
 
-module.exports = { triggerAgent3 };
+async function triggerAgent3(issue, generated) {
+  validateIssueKey(issue?.key);
+  requireConfig(['TARGET_REPO_URL', 'GITHUB_TOKEN', 'JIRA_HOST', 'JIRA_EMAIL', 'JIRA_API_TOKEN']);
+  const prUrl = typeof generated === 'string' ? generated : generated?.prUrl;
+  const pr = await getPullRequest(prUrl);
+  const expectedSha = typeof generated === 'object' ? generated.commitSha : pr.head.sha;
+  if (!/^[a-f0-9]{40}$/.test(expectedSha || '') || pr.head.sha !== expectedSha) throw new Error('The PR changed after generation; run Agent 3 again for the current PR');
+  const { repoDir, git } = await cloneRepository(`${issue.key}-execute-`);
+  await git.fetch('origin', `refs/pull/${pr.number}/head`);
+  const fetchedSha = (await git.revparse(['FETCH_HEAD'])).trim();
+  if (fetchedSha !== expectedSha) throw new Error('PR head changed while fetching tests');
+  await git.checkout(expectedSha);
+
+  const targetPackage = JSON.parse(await fs.readFile(path.join(repoDir, 'package.json'), 'utf8'));
+  if (!targetPackage.dependencies?.['@playwright/test'] && !targetPackage.devDependencies?.['@playwright/test']) {
+    throw new Error('The target repository must declare @playwright/test in package.json');
+  }
+
+  const npmCli = process.env.npm_execpath;
+  const lockExists = await fs.access(path.join(repoDir, 'package-lock.json')).then(() => true, () => false);
+  const installArgs = [lockExists ? 'ci' : 'install', '--include=dev', '--no-audit', '--no-fund'];
+  if (npmCli) await runNode(npmCli, installArgs, repoDir);
+  else if (process.platform === 'win32') {
+    // Only fixed arguments go through cmd; no paths or request input are interpolated.
+    await execute('cmd.exe', ['/d', '/s', '/c', `npm.cmd ${installArgs.join(' ')}`], {
+      cwd: repoDir, windowsHide: true, timeout: 900000, maxBuffer: 20 * 1024 * 1024
+    });
+  } else await execute('npm', installArgs, { cwd: repoDir, timeout: 900000, maxBuffer: 20 * 1024 * 1024 });
+  const cli = require.resolve('@playwright/test/cli', { paths: [repoDir] });
+  await runNode(cli, ['install'], repoDir);
+  const start = Date.now();
+  const results = await runPlaywrightTests(repoDir, process.env.HEADED === 'true');
+  results.durationSeconds = Math.round((Date.now() - start) / 1000);
+  results.prUrl = prUrl;
+  results.commitSha = expectedSha;
+  const transition = results.success ? process.env.JIRA_SUCCESS_STATUS : process.env.JIRA_FAILURE_STATUS;
+  await updateJiraCard(issue.key, {
+    comment: `Agent 3: ${results.success ? 'PASSED' : 'FAILED'}\nPassed: ${results.passed}; Failed: ${results.failed}; Skipped: ${results.skipped}; Flaky: ${results.flaky}\nDuration: ${results.durationSeconds}s\nTest PR: ${prUrl}\nCommit: ${expectedSha}`,
+    ...(transition ? { transition } : {})
+  });
+  return results;
+}
+
+module.exports = { triggerAgent3, runPlaywrightTests, parseReport };

@@ -1,7 +1,6 @@
 # Dependencies
 node_modules/
 npm-debug.log
-package-lock.json
 
 # Environment variables
 .env
@@ -26,6 +25,7 @@ server_debug.log
 
 # Temporary files
 temp-repo/
+work/
 .temp/
 dist/
 build/

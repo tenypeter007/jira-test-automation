@@ -1,10 +1,13 @@
 {
   "name": "jira-test-automation",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Generate and execute Playwright tests from Jira issues",
+  "main": "server.js",
+  "engines": { "node": ">=22" },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "test": "node --test test/*.test.js",
+    "test:smoke": "node scripts/smoke.js"
   },
   "keywords": [],
   "author": "",
@@ -13,11 +16,11 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.73.0",
     "axios": "^1.13.4",
-    "body-parser": "^2.2.2",
     "dotenv": "^17.2.4",
     "express": "^4.18.2",
     "form-data": "^4.0.5",
-    "jira-client": "^8.2.2",
     "simple-git": "^3.30.0"
-  }
+  },
+  "devDependencies": { "@playwright/test": "1.58.2" },
+  "overrides": { "qs": "^6.16.0" }
 }

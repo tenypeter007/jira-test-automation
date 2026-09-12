@@ -1,58 +1,11 @@
-# Build stage
-FROM node:18-bookworm AS builder
-
+FROM mcr.microsoft.com/playwright:v1.58.2-noble
 WORKDIR /app
-
-# Copy package files
-COPY package*.json ./
-
-        # Install production dependencies.
-        # Use "npm ci" when a lockfile is present for reproducible installs,
-        # otherwise fall back to "npm install --omit=dev".
-        RUN if [ -f package-lock.json ]; then \
-                    npm ci --only=production; \
-                else \
-                    npm install --omit=dev; \
-                fi && \
-                # Ensure Playwright runtime is available in the production image
-                npm install playwright --no-audit --no-fund
-
-    # Production stage with Playwright browser
-    # Use the latest official Playwright image (tag may change over time).
-    # If you prefer a specific Playwright version, replace `latest` with that version.
-    FROM mcr.microsoft.com/playwright:latest
-
-WORKDIR /app
-
-# Install additional utilities for headed mode and debugging
-RUN apt-get update && apt-get install -y \
-    xvfb \
-    x11-utils \
-    dbus-x11 \
-    libxss1 \
-    libxkbcommon0 \
-    libxcursor1 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy node modules from builder
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package*.json ./
-
-# Copy application code
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 COPY . .
-
-# Create necessary directories
-RUN mkdir -p /app/test-results \
-    && mkdir -p /app/shared/logs \
-    && mkdir -p /app/shared/test-cases
-
-# Set environment variables
 ENV NODE_ENV=production
-ENV HEADED=true
-ENV HOME=/app
-
-# Expose port for server
+ENV HOST=0.0.0.0
+ENV HEADED=false
 EXPOSE 3000
-
-# Start the application
 CMD ["npm", "start"]
